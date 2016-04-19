@@ -16,3 +16,16 @@ canvas {
 	left : 0;
 	margin : auto;
 }
+
+.controls {
+	padding:50px 10px 10px 50px;
+}
+
+.controls select {
+	display: block;
+	min-width: 20%;
+}
+
+.controls span {
+	color: white;
+}

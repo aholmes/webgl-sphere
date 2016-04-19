@@ -16,6 +16,12 @@ class App
 	private _colors: number[];
 	private _shader: IShaderProgram;
 	
+	private _config:
+	{
+		DrawMode: number;
+		Quality: number;
+	};
+	
 	private _definedColors =
 	[
 		[.1, .1, .1, 1],    // white
@@ -31,8 +37,56 @@ class App
 		this._canvas = canvas;
 		this._ctx = <WebGLRenderingContext>canvas.getContext('webgl');
 		this._ctx.viewport(0,0,canvas.width,canvas.height);
+		
+		this._config = 
+		{
+			DrawMode: this._ctx.TRIANGLES,
+			Quality: 3
+		};
 	}
 
+	public draw()
+	{
+		var buffers = this._setData();
+
+		this._shader = App.UseQuarternionShaderProgram(this._ctx, buffers.vertex, buffers.color);
+
+		var proj_matrix = new Float32Array(Matrix.GetProjection(40, this._canvas.width/this._canvas.height, 1, 100));
+		var view_matrix = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
+		var mov_matrix = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
+		view_matrix[14] = view_matrix[14]-2;
+
+		this._animate(proj_matrix, view_matrix, mov_matrix);
+	}
+	
+	private _setData()
+	{
+		var ctx = this._ctx;
+		
+		var icosahedron = new Icosahedron3D(this._config.Quality);
+		this._vertices = <number[]><any>icosahedron.Points.reduce((a,b,i) => i === 1 ? [a.x,a.y,a.z,b.x,b.y,b.z] : (<any>a).concat([b.x,b.y,b.z]));
+		this._indices = icosahedron.TriangleIndices;
+		this._colors = this._generateColors(this._vertices);
+			
+		var vertex_buffer = ctx.createBuffer();
+		ctx.bindBuffer(ctx.ARRAY_BUFFER, vertex_buffer);
+		ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(this._vertices), ctx.STATIC_DRAW);
+	  
+		var color_buffer = ctx.createBuffer();
+		ctx.bindBuffer(ctx.ARRAY_BUFFER, color_buffer);
+		ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(this._colors), ctx.STATIC_DRAW);
+		
+		var index_buffer = ctx.createBuffer();
+		ctx.bindBuffer(ctx.ELEMENT_ARRAY_BUFFER, index_buffer);
+		ctx.bufferData(ctx.ELEMENT_ARRAY_BUFFER, new Uint16Array(this._indices), ctx.STATIC_DRAW);
+		
+		return {
+			vertex : vertex_buffer,
+			color  : color_buffer,
+			index  : index_buffer
+		};
+	}
+	
 	private _generateColors(vertices: number[])
 	{
 		let colors:number[][] = [];
@@ -44,48 +98,13 @@ class App
 	
 		return colors.reduce((a,b) => a.concat(b));	
 	}
-
-	public draw()
-	{
-		var icosahedron = new Icosahedron3D(3);
-		this._vertices = <number[]><any>icosahedron.Points.reduce((a,b,i) => i === 1 ? [a.x,a.y,a.z,b.x,b.y,b.z] : (<any>a).concat([b.x,b.y,b.z]));
-		this._indices = icosahedron.TriangleIndices;
-		this._colors = this._generateColors(this._vertices);
-		
-		var ctx = this._ctx;
-		var canvas = this._canvas;
-		
-		var vertex_buffer = ctx.createBuffer();
-		this._ctx.bindBuffer(ctx.ARRAY_BUFFER, vertex_buffer);
-		this._ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(this._vertices), ctx.STATIC_DRAW);
-	  
-		var color_buffer = ctx.createBuffer();
-		this._ctx.bindBuffer(ctx.ARRAY_BUFFER, color_buffer);
-		this._ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(this._colors), ctx.STATIC_DRAW);
-		
-		var index_buffer = ctx.createBuffer();
-		this._ctx.bindBuffer(ctx.ELEMENT_ARRAY_BUFFER, index_buffer);
-		this._ctx.bufferData(ctx.ELEMENT_ARRAY_BUFFER, new Uint16Array(this._indices), ctx.STATIC_DRAW);
-    
-		this._shader = App.UseQuarternionShaderProgram(ctx, vertex_buffer, color_buffer);
-
-		var proj_matrix = new Float32Array(Matrix.GetProjection(40, canvas.width/canvas.height, 1, 100));
-		var view_matrix = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
-		var mov_matrix = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
-		view_matrix[14] = view_matrix[14]-2;
-
-		this._animate(proj_matrix, view_matrix, mov_matrix);
-	}
 	
 	private _animate(proj_matrix: Float32Array, view_matrix: Float32Array, mov_matrix: Float32Array)
 	{
 		const ctx = this._ctx;
-		const canvas = this._canvas;
-		const shader = this._shader;
-		const indices = this._indices;
-		let time_old = 0;
 		
-		const execAnimation = function(time: number)
+		let time_old = 0;
+		const execAnimation = (time: number) =>
 		{
 			var dt = time-time_old;
 			Matrix.RotateX(mov_matrix, dt*0.0001);
@@ -96,19 +115,38 @@ class App
 			ctx.depthFunc(ctx.LEQUAL);
 			ctx.clearColor(0.0, 0.333, 0.333, 1);
 			ctx.clearDepth(1.0);
-			ctx.viewport(0.0, 0.0, canvas.width, canvas.height);
+			ctx.viewport(0.0, 0.0, this._canvas.width, this._canvas.height);
 			ctx.clear(ctx.COLOR_BUFFER_BIT | ctx.DEPTH_BUFFER_BIT);
 			
-			ctx.uniformMatrix4fv(shader.Pmatrix, false, proj_matrix);
-			ctx.uniformMatrix4fv(shader.Vmatrix, false, view_matrix);
-			ctx.uniformMatrix4fv(shader.Mmatrix, false, mov_matrix);
+			ctx.uniformMatrix4fv(this._shader.Pmatrix, false, proj_matrix);
+			ctx.uniformMatrix4fv(this._shader.Vmatrix, false, view_matrix);
+			ctx.uniformMatrix4fv(this._shader.Mmatrix, false, mov_matrix);
 			
-			ctx.drawElements(ctx.TRIANGLES, indices.length, ctx.UNSIGNED_SHORT, 0);
+			ctx.drawElements(this._config.DrawMode, this._indices.length, ctx.UNSIGNED_SHORT, 0);
 			
 			window.requestAnimationFrame(execAnimation);
 		}
 		
 		execAnimation(0);
+	}
+	
+	public SetDrawMode(value: string)
+	{
+		var modeValue = (<any>this._ctx)[value];
+		if (modeValue === undefined && typeof modeValue !== 'number') throw new Error(`Invalid mode value '${value}'`);
+
+		this._config.DrawMode = modeValue;
+	}
+	
+	public SetQuality(value: string)
+	{
+		var intValue = parseInt(value, 10);
+		if (isNaN(intValue)) throw new Error(`Quality value must be a number.`);
+
+		this._config.Quality = intValue;
+		
+		var buffers = this._setData();
+		this._shader = App.UseQuarternionShaderProgram(this._ctx, buffers.vertex, buffers.color);
 	}
 
 	public static UseQuarternionVertShader(context: WebGLRenderingContext)
@@ -390,5 +428,15 @@ class Icosahedron3D
 	}
 }
 
-var app = new App(<HTMLCanvasElement>document.getElementById('canvas'));
-app.draw();
+(() =>
+{
+	let app = new App(<HTMLCanvasElement>document.getElementById('canvas'));
+	app.draw();
+
+	let drawMode = <HTMLSelectElement>document.getElementById('drawMode');
+	drawMode.addEventListener('change', (e) => app.SetDrawMode((<HTMLOptionElement>drawMode.options[drawMode.selectedIndex]).value));
+
+	let quality = <HTMLSelectElement>document.getElementById('quality');
+	quality.addEventListener('change', (e) => app.SetQuality((<HTMLOptionElement>quality.options[quality.selectedIndex]).value));
+	
+})();

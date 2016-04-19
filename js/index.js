@@ -11,7 +11,42 @@ var App = (function () {
         this._canvas = canvas;
         this._ctx = canvas.getContext('webgl');
         this._ctx.viewport(0, 0, canvas.width, canvas.height);
+        this._config =
+            {
+                DrawMode: this._ctx.TRIANGLES,
+                Quality: 3
+            };
     }
+    App.prototype.draw = function () {
+        var buffers = this._setData();
+        this._shader = App.UseQuarternionShaderProgram(this._ctx, buffers.vertex, buffers.color);
+        var proj_matrix = new Float32Array(Matrix.GetProjection(40, this._canvas.width / this._canvas.height, 1, 100));
+        var view_matrix = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+        var mov_matrix = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+        view_matrix[14] = view_matrix[14] - 2;
+        this._animate(proj_matrix, view_matrix, mov_matrix);
+    };
+    App.prototype._setData = function () {
+        var ctx = this._ctx;
+        var icosahedron = new Icosahedron3D(this._config.Quality);
+        this._vertices = icosahedron.Points.reduce(function (a, b, i) { return i === 1 ? [a.x, a.y, a.z, b.x, b.y, b.z] : a.concat([b.x, b.y, b.z]); });
+        this._indices = icosahedron.TriangleIndices;
+        this._colors = this._generateColors(this._vertices);
+        var vertex_buffer = ctx.createBuffer();
+        ctx.bindBuffer(ctx.ARRAY_BUFFER, vertex_buffer);
+        ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(this._vertices), ctx.STATIC_DRAW);
+        var color_buffer = ctx.createBuffer();
+        ctx.bindBuffer(ctx.ARRAY_BUFFER, color_buffer);
+        ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(this._colors), ctx.STATIC_DRAW);
+        var index_buffer = ctx.createBuffer();
+        ctx.bindBuffer(ctx.ELEMENT_ARRAY_BUFFER, index_buffer);
+        ctx.bufferData(ctx.ELEMENT_ARRAY_BUFFER, new Uint16Array(this._indices), ctx.STATIC_DRAW);
+        return {
+            vertex: vertex_buffer,
+            color: color_buffer,
+            index: index_buffer
+        };
+    };
     App.prototype._generateColors = function (vertices) {
         var colors = [];
         for (var i = 0; i < vertices.length; i++) {
@@ -19,34 +54,9 @@ var App = (function () {
         }
         return colors.reduce(function (a, b) { return a.concat(b); });
     };
-    App.prototype.draw = function () {
-        var icosahedron = new Icosahedron3D(3);
-        this._vertices = icosahedron.Points.reduce(function (a, b, i) { return i === 1 ? [a.x, a.y, a.z, b.x, b.y, b.z] : a.concat([b.x, b.y, b.z]); });
-        this._indices = icosahedron.TriangleIndices;
-        this._colors = this._generateColors(this._vertices);
-        var ctx = this._ctx;
-        var canvas = this._canvas;
-        var vertex_buffer = ctx.createBuffer();
-        this._ctx.bindBuffer(ctx.ARRAY_BUFFER, vertex_buffer);
-        this._ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(this._vertices), ctx.STATIC_DRAW);
-        var color_buffer = ctx.createBuffer();
-        this._ctx.bindBuffer(ctx.ARRAY_BUFFER, color_buffer);
-        this._ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(this._colors), ctx.STATIC_DRAW);
-        var index_buffer = ctx.createBuffer();
-        this._ctx.bindBuffer(ctx.ELEMENT_ARRAY_BUFFER, index_buffer);
-        this._ctx.bufferData(ctx.ELEMENT_ARRAY_BUFFER, new Uint16Array(this._indices), ctx.STATIC_DRAW);
-        this._shader = App.UseQuarternionShaderProgram(ctx, vertex_buffer, color_buffer);
-        var proj_matrix = new Float32Array(Matrix.GetProjection(40, canvas.width / canvas.height, 1, 100));
-        var view_matrix = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
-        var mov_matrix = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
-        view_matrix[14] = view_matrix[14] - 2;
-        this._animate(proj_matrix, view_matrix, mov_matrix);
-    };
     App.prototype._animate = function (proj_matrix, view_matrix, mov_matrix) {
+        var _this = this;
         var ctx = this._ctx;
-        var canvas = this._canvas;
-        var shader = this._shader;
-        var indices = this._indices;
         var time_old = 0;
         var execAnimation = function (time) {
             var dt = time - time_old;
@@ -57,15 +67,29 @@ var App = (function () {
             ctx.depthFunc(ctx.LEQUAL);
             ctx.clearColor(0.0, 0.333, 0.333, 1);
             ctx.clearDepth(1.0);
-            ctx.viewport(0.0, 0.0, canvas.width, canvas.height);
+            ctx.viewport(0.0, 0.0, _this._canvas.width, _this._canvas.height);
             ctx.clear(ctx.COLOR_BUFFER_BIT | ctx.DEPTH_BUFFER_BIT);
-            ctx.uniformMatrix4fv(shader.Pmatrix, false, proj_matrix);
-            ctx.uniformMatrix4fv(shader.Vmatrix, false, view_matrix);
-            ctx.uniformMatrix4fv(shader.Mmatrix, false, mov_matrix);
-            ctx.drawElements(ctx.TRIANGLES, indices.length, ctx.UNSIGNED_SHORT, 0);
+            ctx.uniformMatrix4fv(_this._shader.Pmatrix, false, proj_matrix);
+            ctx.uniformMatrix4fv(_this._shader.Vmatrix, false, view_matrix);
+            ctx.uniformMatrix4fv(_this._shader.Mmatrix, false, mov_matrix);
+            ctx.drawElements(_this._config.DrawMode, _this._indices.length, ctx.UNSIGNED_SHORT, 0);
             window.requestAnimationFrame(execAnimation);
         };
         execAnimation(0);
+    };
+    App.prototype.SetDrawMode = function (value) {
+        var modeValue = this._ctx[value];
+        if (modeValue === undefined && typeof modeValue !== 'number')
+            throw new Error("Invalid mode value '" + value + "'");
+        this._config.DrawMode = modeValue;
+    };
+    App.prototype.SetQuality = function (value) {
+        var intValue = parseInt(value, 10);
+        if (isNaN(intValue))
+            throw new Error("Quality value must be a number.");
+        this._config.Quality = intValue;
+        var buffers = this._setData();
+        this._shader = App.UseQuarternionShaderProgram(this._ctx, buffers.vertex, buffers.color);
     };
     App.UseQuarternionVertShader = function (context) {
         var vertCode = "\n\t\t\tattribute vec3 position;\n\t\t\tattribute highp vec3 aVertexNormal;\n\t\t\tuniform mat4 Pmatrix;\n\t\t\tuniform mat4 Vmatrix;\n\t\t\tuniform mat4 Mmatrix;\n\n\t\t\tattribute vec4 color;\n\t\t\tvarying lowp vec4 vColor;\n\n\t\t\tvarying highp vec2 vTextureCoord;\n\t\t\tvarying highp vec3 vLighting;\n\n\t\t\tvoid main(void) {\n\t\t\t\tgl_Position = Pmatrix*Vmatrix*Mmatrix*vec4(position, 1.);\n\t\t\t\tgl_PointSize = 4.0;\n\t\t\t\tvColor = color;\n\n\t\t\t\thighp vec3 ambientLight = vec3(1.0, 1.0, 1.0);\n\t\t\t\thighp vec3 directionalLightColor = vec3(1.0, 1.0, 0);\n\t\t\t\thighp vec3 directionalVector = vec3(0.85, 0.75, 0.0);\n\n\t\t\t\thighp vec4 transformedNormal = Vmatrix * vec4(aVertexNormal, 1.0);\n\t\t\t\thighp float directional = max(dot(transformedNormal.xyz, directionalVector), 0.0);\n\t\t\t\tvLighting = ambientLight + (directionalLightColor * directional);\n\t\t\t}";
@@ -253,6 +277,12 @@ var Icosahedron3D = (function () {
     };
     return Icosahedron3D;
 })();
-var app = new App(document.getElementById('canvas'));
-app.draw();
+(function () {
+    var app = new App(document.getElementById('canvas'));
+    app.draw();
+    var drawMode = document.getElementById('drawMode');
+    drawMode.addEventListener('change', function (e) { return app.SetDrawMode(drawMode.options[drawMode.selectedIndex].value); });
+    var quality = document.getElementById('quality');
+    quality.addEventListener('change', function (e) { return app.SetQuality(quality.options[quality.selectedIndex].value); });
+})();
 //# sourceMappingURL=index.js.map

@@ -6,12 +6,23 @@
     <link rel="stylesheet" href="css/style.css">
   </head>
   <body>
-    <div>
-      <select id="meshType">
-        <option value="TRIANGLES">Triangles</option>
+    <div class="controls">
+      <select id="drawMode">
+        <option disabled selected>Draw mode</option>
+        <option value="TRIANGLES">Triangles *</option>
         <option value="LINES">Lines</option>
         <option value="POINTS">Points</option>
       </select>
+      
+      <select id="quality">
+        <option disabled selected>Quality</option>
+        <option value="0">Basic</option>
+        <option value="1">Simple</option>
+        <option value="2">Better</option>
+        <option value="3">Best *</option>
+      </select>
+      
+      <span>* denotes default values</span>
     </div>
     <canvas id="canvas" width="500" height="500"></canvas>
     <script src="js/index.js"></script>
