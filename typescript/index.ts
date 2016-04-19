@@ -1,8 +1,30 @@
 // Following http://www.tutorialspoint.com/webgl/webgl_modes_of_drawing.htm
+interface IShaderProgram
+{
+	Pmatrix: WebGLUniformLocation,
+	Vmatrix: WebGLUniformLocation,
+	Mmatrix: WebGLUniformLocation,
+	ShaderProgram: WebGLProgram
+}
+
 class App
 {
 	private _canvas: HTMLCanvasElement;
 	private _ctx: WebGLRenderingContext;
+	private _vertices: number[];
+	private _indices: number[];
+	private _colors: number[];
+	private _shader: IShaderProgram;
+	
+	private _definedColors =
+	[
+		[.1, .1, .1, 1],    // white
+		[.1, .0, .0, 1],    // red
+		[.0, .1, .0, 1],    // green
+		[.0, .0, .1, 1],    // blue
+		[.1, .1, .0, 1],    // yellow
+		[.1, .0, .1, 1]     // purple
+	];
 
 	constructor(canvas: HTMLCanvasElement)
 	{
@@ -11,53 +33,59 @@ class App
 		this._ctx.viewport(0,0,canvas.width,canvas.height);
 	}
 
+	private _generateColors(vertices: number[])
+	{
+		let colors:number[][] = [];
+	
+		for(let i = 0; i < vertices.length; i++)
+		{
+			colors[i] = this._definedColors[colors.length % this._definedColors.length];
+		}
+	
+		return colors.reduce((a,b) => a.concat(b));	
+	}
+
 	public draw()
 	{
 		var icosahedron = new Icosahedron3D(3);
-		var vertices = <number[]><any>icosahedron.Points.reduce((a,b,i) => i === 1 ? [a.x,a.y,a.z,b.x,b.y,b.z] : (<any>a).concat([b.x,b.y,b.z]));
-		var indices = icosahedron.TriangleIndices;
-		var preDefColors =
-		[
-			[.1, .1, .1, 1],    // white
-			[.1, .0, .0, 1],    // red
-			[.0, .1, .0, 1],    // green
-			[.0, .0, .1, 1],    // blue
-			[.1, .1, .0, 1],    // yellow
-			[.1, .0, .1, 1]     // purple
-		];
-		
-		var colors: any[] = [];
-		
-		for(let i = 0; i < vertices.length; i++)
-		{
-			colors[i] = preDefColors[colors.length % preDefColors.length];
-		}
-		colors = colors.reduce((a,b) => a.concat(b));
+		this._vertices = <number[]><any>icosahedron.Points.reduce((a,b,i) => i === 1 ? [a.x,a.y,a.z,b.x,b.y,b.z] : (<any>a).concat([b.x,b.y,b.z]));
+		this._indices = icosahedron.TriangleIndices;
+		this._colors = this._generateColors(this._vertices);
 		
 		var ctx = this._ctx;
 		var canvas = this._canvas;
 		
 		var vertex_buffer = ctx.createBuffer();
 		this._ctx.bindBuffer(ctx.ARRAY_BUFFER, vertex_buffer);
-		this._ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(vertices), ctx.STATIC_DRAW);
+		this._ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(this._vertices), ctx.STATIC_DRAW);
 	  
 		var color_buffer = ctx.createBuffer();
 		this._ctx.bindBuffer(ctx.ARRAY_BUFFER, color_buffer);
-		this._ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(colors), ctx.STATIC_DRAW);
+		this._ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(this._colors), ctx.STATIC_DRAW);
 		
 		var index_buffer = ctx.createBuffer();
 		this._ctx.bindBuffer(ctx.ELEMENT_ARRAY_BUFFER, index_buffer);
-		this._ctx.bufferData(ctx.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), ctx.STATIC_DRAW);
+		this._ctx.bufferData(ctx.ELEMENT_ARRAY_BUFFER, new Uint16Array(this._indices), ctx.STATIC_DRAW);
     
-		var shader = App.UseQuarternionShaderProgram(ctx, vertex_buffer, color_buffer);
+		this._shader = App.UseQuarternionShaderProgram(ctx, vertex_buffer, color_buffer);
 
-		var proj_matrix = Matrix.GetProjection(40, canvas.width/canvas.height, 1, 100);
-		var view_matrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
-		var mov_matrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+		var proj_matrix = new Float32Array(Matrix.GetProjection(40, canvas.width/canvas.height, 1, 100));
+		var view_matrix = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
+		var mov_matrix = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
 		view_matrix[14] = view_matrix[14]-2;
-	  
-		var time_old = 0;
-		var animate = function(time:number)
+
+		this._animate(proj_matrix, view_matrix, mov_matrix);
+	}
+	
+	private _animate(proj_matrix: Float32Array, view_matrix: Float32Array, mov_matrix: Float32Array)
+	{
+		const ctx = this._ctx;
+		const canvas = this._canvas;
+		const shader = this._shader;
+		const indices = this._indices;
+		let time_old = 0;
+		
+		const execAnimation = function(time: number)
 		{
 			var dt = time-time_old;
 			Matrix.RotateX(mov_matrix, dt*0.0001);
@@ -71,17 +99,16 @@ class App
 			ctx.viewport(0.0, 0.0, canvas.width, canvas.height);
 			ctx.clear(ctx.COLOR_BUFFER_BIT | ctx.DEPTH_BUFFER_BIT);
 			
-			ctx.uniformMatrix4fv(shader.Pmatrix, false, new Float32Array(proj_matrix));
-			ctx.uniformMatrix4fv(shader.Vmatrix, false, new Float32Array(view_matrix));
-			ctx.uniformMatrix4fv(shader.Mmatrix, false, new Float32Array(mov_matrix));
+			ctx.uniformMatrix4fv(shader.Pmatrix, false, proj_matrix);
+			ctx.uniformMatrix4fv(shader.Vmatrix, false, view_matrix);
+			ctx.uniformMatrix4fv(shader.Mmatrix, false, mov_matrix);
 			
-			ctx.bindBuffer(ctx.ELEMENT_ARRAY_BUFFER, index_buffer);
-			ctx.drawElements(ctx.POINTS, indices.length, ctx.UNSIGNED_SHORT, 0);
+			ctx.drawElements(ctx.TRIANGLES, indices.length, ctx.UNSIGNED_SHORT, 0);
 			
-			window.requestAnimationFrame(animate);
-		};
+			window.requestAnimationFrame(execAnimation);
+		}
 		
-		animate(0);
+		execAnimation(0);
 	}
 
 	public static UseQuarternionVertShader(context: WebGLRenderingContext)
@@ -101,6 +128,7 @@ class App
 
 			void main(void) {
 				gl_Position = Pmatrix*Vmatrix*Mmatrix*vec4(position, 1.);
+				gl_PointSize = 4.0;
 				vColor = color;
 
 				highp vec3 ambientLight = vec3(1.0, 1.0, 1.0);
@@ -128,7 +156,6 @@ class App
 			uniform sampler2D uSampler;
 			void main(void) {
 				gl_FragColor = vec4(vColor.rgb * vLighting, 1.);
-				gl_PointSize = 10.0;
 			}`;
 		
 		var fragShader = context.createShader(context.FRAGMENT_SHADER);
@@ -138,7 +165,7 @@ class App
 		return fragShader;
 	}
 
-	public static UseQuarternionShaderProgram(context: WebGLRenderingContext, vertex_buffer: WebGLBuffer, color_buffer: WebGLBuffer)
+	public static UseQuarternionShaderProgram(context: WebGLRenderingContext, vertex_buffer: WebGLBuffer, color_buffer: WebGLBuffer): IShaderProgram
 	{
 		var vertShader = App.UseQuarternionVertShader(context);
 		var fragShader = App.UseVariableFragShader(context);
@@ -168,7 +195,7 @@ class App
 			Pmatrix: Pmatrix,
 			Vmatrix: Vmatrix,
 			Mmatrix: Mmatrix,
-			shaderProgram: shaderProgram
+			ShaderProgram: shaderProgram
 		};
 	}
 }
@@ -186,7 +213,7 @@ class Matrix
 		];
 	}
 	
-	public static RotateX(m: number, angle: number)
+	public static RotateX(m: Float32Array, angle: number)
 	{
 		var c = Math.cos(angle);
 		var s = Math.sin(angle);
@@ -201,7 +228,7 @@ class Matrix
 		m[10] = m[10]*c+mv9*s;
 	}
 	
-	public static RotateY(m: number, angle: number)
+	public static RotateY(m: Float32Array, angle: number)
 	{
 		var c = Math.cos(angle);
 		var s = Math.sin(angle);
@@ -216,7 +243,7 @@ class Matrix
 		m[10] = c*m[10]-s*mv8;
 	}
 	
-	public static RotateZ(m: number, angle: number)
+	public static RotateZ(m: Float32Array, angle: number)
 	{
 		var c = Math.cos(angle);
 		var s = Math.sin(angle);
