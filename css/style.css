@@ -1,11 +1,21 @@
 html,
 body {
+	box-sizing: border-box;
 	position: relative;
 	width : 100%;
 	height : 100%;
 	margin : 0;
 	padding : 0;
 	background-color : rgb(0, 85, 85);
+}
+
+.clearfix:after {
+	visibility: hidden;
+	display: block;
+	font-size: 0;
+	content: " ";
+	clear: both;
+	height: 0;
 }
 
 canvas {
@@ -18,14 +28,35 @@ canvas {
 }
 
 .controls {
+	width: 20%;
 	padding:50px 10px 10px 50px;
 }
 
-.controls select {
+.controls select,
+.controls input {
 	display: block;
-	min-width: 20%;
+	width: 100%;
 }
 
 .controls span {
 	color: white;
+}
+
+.sliderGroup {
+	width : 100%;
+}
+
+.sliderGroup input {
+	padding:0;
+	margin:0;
+	float:left;
+	border:0;
+}
+
+.sliderGroup input[type="range"] {
+	width:80%;
+}
+
+.sliderGroup input[type="text"] {
+	width:20%;
 }

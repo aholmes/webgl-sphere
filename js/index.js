@@ -1,12 +1,10 @@
 var App = (function () {
     function App(canvas) {
         this._definedColors = [
-            [.1, .1, .1, 1],
+            //[.1, .1, .1, 1],    // white
             [.1, .0, .0, 1],
             [.0, .1, .0, 1],
             [.0, .0, .1, 1],
-            [.1, .1, .0, 1],
-            [.1, .0, .1, 1] // purple
         ];
         this._canvas = canvas;
         this._ctx = canvas.getContext('webgl');
@@ -14,18 +12,14 @@ var App = (function () {
         this._config =
             {
                 DrawMode: this._ctx.TRIANGLES,
-                Quality: 3
+                Quality: 3,
+                Rotation: {
+                    X: 0.0001,
+                    Y: 0.00005,
+                    Z: 0
+                }
             };
     }
-    App.prototype.draw = function () {
-        var buffers = this._setData();
-        this._shader = App.UseQuarternionShaderProgram(this._ctx, buffers.vertex, buffers.color);
-        var proj_matrix = new Float32Array(Matrix.GetProjection(40, this._canvas.width / this._canvas.height, 1, 100));
-        var view_matrix = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
-        var mov_matrix = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
-        view_matrix[14] = view_matrix[14] - 2;
-        this._animate(proj_matrix, view_matrix, mov_matrix);
-    };
     App.prototype._setData = function () {
         var ctx = this._ctx;
         var icosahedron = new Icosahedron3D(this._config.Quality);
@@ -49,7 +43,7 @@ var App = (function () {
     };
     App.prototype._generateColors = function (vertices) {
         var colors = [];
-        for (var i = 0; i < vertices.length; i++) {
+        for (var i = 0; i < vertices.length; i += 4) {
             colors[i] = this._definedColors[colors.length % this._definedColors.length];
         }
         return colors.reduce(function (a, b) { return a.concat(b); });
@@ -57,11 +51,16 @@ var App = (function () {
     App.prototype._animate = function (proj_matrix, view_matrix, mov_matrix) {
         var _this = this;
         var ctx = this._ctx;
+        var rotThetas = this._config.Rotation;
         var time_old = 0;
         var execAnimation = function (time) {
             var dt = time - time_old;
-            Matrix.RotateX(mov_matrix, dt * 0.0001);
-            Matrix.RotateY(mov_matrix, dt * 0.00005);
+            for (var axis in rotThetas) {
+                var theta = rotThetas[axis];
+                if (theta > 0.0 || theta < 0.0) {
+                    Matrix[("Rotate" + axis)](mov_matrix, dt * theta);
+                }
+            }
             time_old = time;
             ctx.enable(ctx.DEPTH_TEST);
             ctx.depthFunc(ctx.LEQUAL);
@@ -77,6 +76,15 @@ var App = (function () {
         };
         execAnimation(0);
     };
+    App.prototype.Draw = function () {
+        var buffers = this._setData();
+        this._shader = App.UseQuarternionShaderProgram(this._ctx, buffers.vertex, buffers.color);
+        var proj_matrix = new Float32Array(Matrix.GetProjection(40, this._canvas.width / this._canvas.height, 1, 100));
+        var view_matrix = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+        var mov_matrix = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+        view_matrix[14] = view_matrix[14] - 2;
+        this._animate(proj_matrix, view_matrix, mov_matrix);
+    };
     App.prototype.SetDrawMode = function (value) {
         var modeValue = this._ctx[value];
         if (modeValue === undefined && typeof modeValue !== 'number')
@@ -90,6 +98,16 @@ var App = (function () {
         this._config.Quality = intValue;
         var buffers = this._setData();
         this._shader = App.UseQuarternionShaderProgram(this._ctx, buffers.vertex, buffers.color);
+    };
+    App.prototype.GetRotation = function (axis) {
+        return this._config.Rotation[axis];
+    };
+    App.prototype.SetRotation = function (axis, value) {
+        if (this._config.Rotation[axis] === undefined)
+            throw new Error("Invalid axis '" + axis + "'");
+        if (isNaN(value) || typeof value !== 'number')
+            throw new Error("Rotation value must be a number.");
+        this._config.Rotation[axis] = value;
     };
     App.UseQuarternionVertShader = function (context) {
         var vertCode = "\n\t\t\tattribute vec3 position;\n\t\t\tattribute highp vec3 aVertexNormal;\n\t\t\tuniform mat4 Pmatrix;\n\t\t\tuniform mat4 Vmatrix;\n\t\t\tuniform mat4 Mmatrix;\n\n\t\t\tattribute vec4 color;\n\t\t\tvarying lowp vec4 vColor;\n\n\t\t\tvarying highp vec2 vTextureCoord;\n\t\t\tvarying highp vec3 vLighting;\n\n\t\t\tvoid main(void) {\n\t\t\t\tgl_Position = Pmatrix*Vmatrix*Mmatrix*vec4(position, 1.);\n\t\t\t\tgl_PointSize = 4.0;\n\t\t\t\tvColor = color;\n\n\t\t\t\thighp vec3 ambientLight = vec3(1.0, 1.0, 1.0);\n\t\t\t\thighp vec3 directionalLightColor = vec3(1.0, 1.0, 0);\n\t\t\t\thighp vec3 directionalVector = vec3(0.85, 0.75, 0.0);\n\n\t\t\t\thighp vec4 transformedNormal = Vmatrix * vec4(aVertexNormal, 1.0);\n\t\t\t\thighp float directional = max(dot(transformedNormal.xyz, directionalVector), 0.0);\n\t\t\t\tvLighting = ambientLight + (directionalLightColor * directional);\n\t\t\t}";
@@ -277,12 +295,27 @@ var Icosahedron3D = (function () {
     };
     return Icosahedron3D;
 })();
+function showRangeValue(prepend, sliderId, inputId) {
+    document.getElementById(inputId).value = prepend + document.getElementById(sliderId).value;
+}
 (function () {
     var app = new App(document.getElementById('canvas'));
-    app.draw();
+    app.Draw();
     var drawMode = document.getElementById('drawMode');
     drawMode.addEventListener('change', function (e) { return app.SetDrawMode(drawMode.options[drawMode.selectedIndex].value); });
     var quality = document.getElementById('quality');
     quality.addEventListener('change', function (e) { return app.SetQuality(quality.options[quality.selectedIndex].value); });
+    var sliderX = document.getElementById('sliderX');
+    var sliderY = document.getElementById('sliderY');
+    var sliderZ = document.getElementById('sliderZ');
+    sliderX.value = app.GetRotation('X').toString();
+    sliderY.value = app.GetRotation('Y').toString();
+    sliderZ.value = app.GetRotation('Z').toString();
+    sliderX.addEventListener('input', function () { return app.SetRotation(sliderX.getAttribute('data-axis'), parseFloat(sliderX.value)); });
+    sliderY.addEventListener('input', function () { return app.SetRotation(sliderY.getAttribute('data-axis'), parseFloat(sliderY.value)); });
+    sliderZ.addEventListener('input', function () { return app.SetRotation(sliderZ.getAttribute('data-axis'), parseFloat(sliderZ.value)); });
+    showRangeValue('X:', 'sliderX', 'sliderInputX');
+    showRangeValue('Y:', 'sliderY', 'sliderInputY');
+    showRangeValue('Z:', 'sliderZ', 'sliderInputZ');
 })();
 //# sourceMappingURL=index.js.map
