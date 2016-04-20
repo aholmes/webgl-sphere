@@ -9,10 +9,13 @@ var App = (function () {
         this._canvas = canvas;
         this._ctx = canvas.getContext('webgl');
         this._ctx.viewport(0, 0, canvas.width, canvas.height);
+        this._canvas.setAttribute('width', this._canvas.clientWidth.toString());
+        this._canvas.setAttribute('height', this._canvas.clientHeight.toString());
         this._config =
             {
                 DrawMode: this._ctx.TRIANGLES,
                 Quality: 3,
+                ZoomLevel: -2.8,
                 Rotation: {
                     X: 0.0001,
                     Y: 0.00005,
@@ -53,18 +56,23 @@ var App = (function () {
         var ctx = this._ctx;
         var rotThetas = this._config.Rotation;
         var time_old = 0;
+        var zoomLevel_old = 0;
         var execAnimation = function (time) {
             var dt = time - time_old;
+            time_old = time;
             for (var axis in rotThetas) {
                 var theta = rotThetas[axis];
                 if (theta > 0.0 || theta < 0.0) {
                     Matrix[("Rotate" + axis)](mov_matrix, dt * theta);
                 }
             }
-            time_old = time;
+            if (Math.abs(_this._config.ZoomLevel - zoomLevel_old) >= 0.01) {
+                view_matrix[14] = view_matrix[14] + (zoomLevel_old * -1) + _this._config.ZoomLevel;
+                zoomLevel_old = _this._config.ZoomLevel;
+                console.log(_this._config.ZoomLevel);
+            }
             ctx.enable(ctx.DEPTH_TEST);
             ctx.depthFunc(ctx.LEQUAL);
-            ctx.clearColor(0.0, 0.333, 0.333, 1);
             ctx.clearDepth(1.0);
             ctx.viewport(0.0, 0.0, _this._canvas.width, _this._canvas.height);
             ctx.clear(ctx.COLOR_BUFFER_BIT | ctx.DEPTH_BUFFER_BIT);
@@ -82,7 +90,6 @@ var App = (function () {
         var proj_matrix = new Float32Array(Matrix.GetProjection(40, this._canvas.width / this._canvas.height, 1, 100));
         var view_matrix = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
         var mov_matrix = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
-        view_matrix[14] = view_matrix[14] - 2;
         this._animate(proj_matrix, view_matrix, mov_matrix);
     };
     App.prototype.SetDrawMode = function (value) {
@@ -109,39 +116,53 @@ var App = (function () {
             throw new Error("Rotation value must be a number.");
         this._config.Rotation[axis] = value;
     };
+    App.prototype.GetZoom = function () {
+        return this._config.ZoomLevel;
+    };
+    App.prototype.SetZoom = function (value) {
+        if (isNaN(value) || typeof value !== 'number')
+            throw new Error("Zoom value must be a number.");
+        this._config.ZoomLevel = value;
+    };
     App.UseQuarternionVertShader = function (context) {
-        var vertCode = "\n\t\t\tattribute vec3 position;\n\t\t\tattribute highp vec3 aVertexNormal;\n\t\t\tuniform mat4 Pmatrix;\n\t\t\tuniform mat4 Vmatrix;\n\t\t\tuniform mat4 Mmatrix;\n\n\t\t\tattribute vec4 color;\n\t\t\tvarying lowp vec4 vColor;\n\n\t\t\tvarying highp vec2 vTextureCoord;\n\t\t\tvarying highp vec3 vLighting;\n\n\t\t\tvoid main(void) {\n\t\t\t\tgl_Position = Pmatrix*Vmatrix*Mmatrix*vec4(position, 1.);\n\t\t\t\tgl_PointSize = 4.0;\n\t\t\t\tvColor = color;\n\n\t\t\t\thighp vec3 ambientLight = vec3(1.0, 1.0, 1.0);\n\t\t\t\thighp vec3 directionalLightColor = vec3(1.0, 1.0, 0);\n\t\t\t\thighp vec3 directionalVector = vec3(0.85, 0.75, 0.0);\n\n\t\t\t\thighp vec4 transformedNormal = Vmatrix * vec4(aVertexNormal, 1.0);\n\t\t\t\thighp float directional = max(dot(transformedNormal.xyz, directionalVector), 0.0);\n\t\t\t\tvLighting = ambientLight + (directionalLightColor * directional);\n\t\t\t}";
+        var vertCode = "\n\t\t\tattribute vec3 position;\n\t\t\tattribute highp vec3 aVertexNormal;\n\t\t\t\n\t\t\tuniform mat4 Pmatrix;\n\t\t\tuniform mat4 Vmatrix;\n\t\t\tuniform mat4 Mmatrix;\n\n\t\t\tattribute vec4 color;\n\t\t\tvarying lowp vec4 vColor;\n\n\t\t\tvarying vec3 vLightWeighting;\n\t\t\t\n\t\t\tuniform vec3 uAmbientColor;\n\t\t\tuniform vec3 uPointLightingLocation;\n\t\t\tuniform vec3 uPointLightingColor;\n\n\t\t\tvoid main(void) {\n\t\t\t\tvec4 mvPosition = Mmatrix * vec4(position, 1.);\n\t\t\t\tgl_Position = Pmatrix*Vmatrix*mvPosition;\n\t\t\t\tgl_PointSize = 4.0;\n\t\t\t\tvColor = color;\n\n\t\t\t\tvec3 lightDirection = normalize(uPointLightingLocation - mvPosition.xyz);\n\t\t\t\tvec3 transformedNormal = vec3(Vmatrix) * aVertexNormal;\n\t\t\t\tfloat directionalLightWeighting = max(dot(transformedNormal, lightDirection), 0.0);\n\t\t\t\tvLightWeighting = uAmbientColor + uPointLightingColor * directionalLightWeighting;\n\t\t\t}";
         var vertShader = context.createShader(context.VERTEX_SHADER);
         context.shaderSource(vertShader, vertCode);
         context.compileShader(vertShader);
         return vertShader;
     };
     App.UseVariableFragShader = function (context) {
-        var fragCode = "\n\t\t\tprecision mediump float;\n\t\t\tvarying lowp vec4 vColor;\n\t\t\tvarying highp vec3 vLighting;\n\t\t\tuniform sampler2D uSampler;\n\t\t\tvoid main(void) {\n\t\t\t\tgl_FragColor = vec4(vColor.rgb * vLighting, 1.);\n\t\t\t}";
+        var fragCode = "\n\t\t\tprecision mediump float;\n\t\t\tvarying lowp vec4 vColor;\n\t\t\tvarying vec3 vLightWeighting;\n\t\t\tvoid main(void) {\n\t\t\t\tgl_FragColor = vec4(vColor.rgb, 1.);\n\t\t\t}";
         var fragShader = context.createShader(context.FRAGMENT_SHADER);
         context.shaderSource(fragShader, fragCode);
         context.compileShader(fragShader);
         return fragShader;
     };
-    App.UseQuarternionShaderProgram = function (context, vertex_buffer, color_buffer) {
-        var vertShader = App.UseQuarternionVertShader(context);
-        var fragShader = App.UseVariableFragShader(context);
-        var shaderProgram = context.createProgram();
-        context.attachShader(shaderProgram, vertShader);
-        context.attachShader(shaderProgram, fragShader);
-        context.linkProgram(shaderProgram);
-        var Pmatrix = context.getUniformLocation(shaderProgram, "Pmatrix");
-        var Vmatrix = context.getUniformLocation(shaderProgram, "Vmatrix");
-        var Mmatrix = context.getUniformLocation(shaderProgram, "Mmatrix");
-        context.bindBuffer(context.ARRAY_BUFFER, vertex_buffer);
-        var position = context.getAttribLocation(shaderProgram, "position");
-        context.vertexAttribPointer(position, 3, context.FLOAT, false, 0, 0);
-        context.enableVertexAttribArray(position);
-        context.bindBuffer(context.ARRAY_BUFFER, color_buffer);
-        var color = context.getAttribLocation(shaderProgram, "color");
-        context.vertexAttribPointer(color, 3, context.FLOAT, false, 0, 0);
-        context.enableVertexAttribArray(color);
-        context.useProgram(shaderProgram);
+    App.UseQuarternionShaderProgram = function (ctx, vertex_buffer, color_buffer) {
+        var vertShader = App.UseQuarternionVertShader(ctx);
+        var fragShader = App.UseVariableFragShader(ctx);
+        var shaderProgram = ctx.createProgram();
+        ctx.attachShader(shaderProgram, vertShader);
+        ctx.attachShader(shaderProgram, fragShader);
+        ctx.linkProgram(shaderProgram);
+        var Pmatrix = ctx.getUniformLocation(shaderProgram, "Pmatrix");
+        var Vmatrix = ctx.getUniformLocation(shaderProgram, "Vmatrix");
+        var Mmatrix = ctx.getUniformLocation(shaderProgram, "Mmatrix");
+        ctx.bindBuffer(ctx.ARRAY_BUFFER, vertex_buffer);
+        var position = ctx.getAttribLocation(shaderProgram, "position");
+        ctx.vertexAttribPointer(position, 3, ctx.FLOAT, false, 0, 0);
+        ctx.enableVertexAttribArray(position);
+        ctx.bindBuffer(ctx.ARRAY_BUFFER, color_buffer);
+        var color = ctx.getAttribLocation(shaderProgram, "color");
+        ctx.vertexAttribPointer(color, 3, ctx.FLOAT, false, 0, 0);
+        ctx.enableVertexAttribArray(color);
+        ctx.useProgram(shaderProgram);
+        var ambientColor = ctx.getUniformLocation(shaderProgram, "uAmbientColor");
+        var pointLightingLocation = ctx.getUniformLocation(shaderProgram, "uPointLightingLocation");
+        var pointLightingColor = ctx.getUniformLocation(shaderProgram, "uPointLightingColor");
+        ctx.uniform3f(ambientColor, 0.2, 0.2, 0.2);
+        ctx.uniform3f(pointLightingLocation, 0.0, 0.0, -20.0);
+        ctx.uniform3f(pointLightingColor, 0.8, 0.8, 0.8);
         return {
             Pmatrix: Pmatrix,
             Vmatrix: Vmatrix,
@@ -196,6 +217,35 @@ var Matrix = (function () {
         m[5] = c * m[5] + s * mv4;
         m[9] = c * m[9] + s * mv8;
     };
+    Matrix.Translate = function (a, b, c) {
+        var d = b[0], e = b[1], s = b[2];
+        if (!c || a == c) {
+            a[12] = a[0] * d + a[4] * e + a[8] * s + a[12];
+            a[13] = a[1] * d + a[5] * e + a[9] * s + a[13];
+            a[14] = a[2] * d + a[6] * e + a[10] * s + a[14];
+            a[15] = a[3] * d + a[7] * e + a[11] * s + a[15];
+            return a;
+        }
+        var g = a[0], f = a[1], h = a[2], i = a[3], j = a[4], k = a[5], l = a[6], o = a[7], m = a[8], n = a[9], p = a[10], r = a[11];
+        c[0] = g;
+        c[1] = f;
+        c[2] = h;
+        c[3] = i;
+        c[4] = j;
+        c[5] = k;
+        c[6] = l;
+        c[7] = o;
+        c[8] = m;
+        c[9] = n;
+        c[10] = p;
+        c[11] = r;
+        c[12] = g * d + j * e + m * s + a[12];
+        c[13] = f * d + k * e + n * s + a[13];
+        c[14] = h * d + l * e + p * s + a[14];
+        c[15] = i * d + o * e + r * s + a[15];
+        return c;
+    };
+    ;
     return Matrix;
 })();
 var Icosahedron3D = (function () {
@@ -300,7 +350,6 @@ function showRangeValue(prepend, sliderId, inputId) {
 }
 (function () {
     var app = new App(document.getElementById('canvas'));
-    app.Draw();
     var drawMode = document.getElementById('drawMode');
     drawMode.addEventListener('change', function (e) { return app.SetDrawMode(drawMode.options[drawMode.selectedIndex].value); });
     var quality = document.getElementById('quality');
@@ -308,14 +357,19 @@ function showRangeValue(prepend, sliderId, inputId) {
     var sliderX = document.getElementById('sliderX');
     var sliderY = document.getElementById('sliderY');
     var sliderZ = document.getElementById('sliderZ');
+    var sliderZoom = document.getElementById('sliderZoom');
     sliderX.value = app.GetRotation('X').toString();
     sliderY.value = app.GetRotation('Y').toString();
     sliderZ.value = app.GetRotation('Z').toString();
+    sliderZoom.value = app.GetZoom().toString();
     sliderX.addEventListener('input', function () { return app.SetRotation(sliderX.getAttribute('data-axis'), parseFloat(sliderX.value)); });
     sliderY.addEventListener('input', function () { return app.SetRotation(sliderY.getAttribute('data-axis'), parseFloat(sliderY.value)); });
     sliderZ.addEventListener('input', function () { return app.SetRotation(sliderZ.getAttribute('data-axis'), parseFloat(sliderZ.value)); });
+    sliderZoom.addEventListener('input', function () { return app.SetZoom(parseFloat(sliderZoom.value)); });
     showRangeValue('X:', 'sliderX', 'sliderInputX');
     showRangeValue('Y:', 'sliderY', 'sliderInputY');
     showRangeValue('Z:', 'sliderZ', 'sliderInputZ');
+    showRangeValue('', 'sliderZoom', 'sliderInputZoom');
+    app.Draw();
 })();
 //# sourceMappingURL=index.js.map

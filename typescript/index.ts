@@ -20,6 +20,7 @@ class App
 	{
 		DrawMode: number;
 		Quality: number;
+		ZoomLevel: number;
 		
 		Rotation:
 		{
@@ -46,10 +47,14 @@ class App
 		this._ctx = <WebGLRenderingContext>canvas.getContext('webgl');
 		this._ctx.viewport(0,0,canvas.width,canvas.height);
 		
+		this._canvas.setAttribute('width', this._canvas.clientWidth.toString());
+		this._canvas.setAttribute('height', this._canvas.clientHeight.toString());
+		
 		this._config = 
 		{
 			DrawMode: this._ctx.TRIANGLES,
 			Quality: 3,
+			ZoomLevel: -2.8,
 			
 			Rotation:
 			{
@@ -106,9 +111,11 @@ class App
 		const rotThetas = this._config.Rotation;
 		
 		let time_old = 0;
+		let zoomLevel_old = 0;
 		const execAnimation = (time: number) =>
 		{
 			var dt = time-time_old;
+			time_old = time;
 			
 			for(var axis in rotThetas)
 			{
@@ -118,12 +125,16 @@ class App
 					(<any>Matrix)[`Rotate${axis}`](mov_matrix, dt * theta);
 				}
 			}
-			
-			time_old = time;
+
+			if (Math.abs(this._config.ZoomLevel - zoomLevel_old) >= 0.01)
+			{
+				view_matrix[14] = view_matrix[14] + (zoomLevel_old * -1) + this._config.ZoomLevel;
+				zoomLevel_old = this._config.ZoomLevel;
+				console.log(this._config.ZoomLevel);
+			}
 
 			ctx.enable(ctx.DEPTH_TEST);
 			ctx.depthFunc(ctx.LEQUAL);
-			ctx.clearColor(0.0, 0.333, 0.333, 1);
 			ctx.clearDepth(1.0);
 			ctx.viewport(0.0, 0.0, this._canvas.width, this._canvas.height);
 			ctx.clear(ctx.COLOR_BUFFER_BIT | ctx.DEPTH_BUFFER_BIT);
@@ -148,8 +159,7 @@ class App
 
 		var proj_matrix = new Float32Array(Matrix.GetProjection(40, this._canvas.width/this._canvas.height, 1, 100));
 		var view_matrix = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
-		var mov_matrix = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
-		view_matrix[14] = view_matrix[14]-2;
+		var mov_matrix = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);		
 
 		this._animate(proj_matrix, view_matrix, mov_matrix);
 	}
@@ -186,12 +196,25 @@ class App
 		
 		this._config.Rotation[axis] = value;
 	}
+	
+	public GetZoom()
+	{
+		return this._config.ZoomLevel;
+	}
+	
+	public SetZoom(value: number)
+	{
+		if (isNaN(value) || typeof value !== 'number') throw new Error(`Zoom value must be a number.`);
+
+		this._config.ZoomLevel = value;
+	}
 
 	public static UseQuarternionVertShader(context: WebGLRenderingContext)
 	{
 		var vertCode = `
 			attribute vec3 position;
 			attribute highp vec3 aVertexNormal;
+			
 			uniform mat4 Pmatrix;
 			uniform mat4 Vmatrix;
 			uniform mat4 Mmatrix;
@@ -199,21 +222,22 @@ class App
 			attribute vec4 color;
 			varying lowp vec4 vColor;
 
-			varying highp vec2 vTextureCoord;
-			varying highp vec3 vLighting;
+			varying vec3 vLightWeighting;
+			
+			uniform vec3 uAmbientColor;
+			uniform vec3 uPointLightingLocation;
+			uniform vec3 uPointLightingColor;
 
 			void main(void) {
-				gl_Position = Pmatrix*Vmatrix*Mmatrix*vec4(position, 1.);
+				vec4 mvPosition = Mmatrix * vec4(position, 1.);
+				gl_Position = Pmatrix*Vmatrix*mvPosition;
 				gl_PointSize = 4.0;
 				vColor = color;
 
-				highp vec3 ambientLight = vec3(1.0, 1.0, 1.0);
-				highp vec3 directionalLightColor = vec3(1.0, 1.0, 0);
-				highp vec3 directionalVector = vec3(0.85, 0.75, 0.0);
-
-				highp vec4 transformedNormal = Vmatrix * vec4(aVertexNormal, 1.0);
-				highp float directional = max(dot(transformedNormal.xyz, directionalVector), 0.0);
-				vLighting = ambientLight + (directionalLightColor * directional);
+				vec3 lightDirection = normalize(uPointLightingLocation - mvPosition.xyz);
+				vec3 transformedNormal = vec3(Vmatrix) * aVertexNormal;
+				float directionalLightWeighting = max(dot(transformedNormal, lightDirection), 0.0);
+				vLightWeighting = uAmbientColor + uPointLightingColor * directionalLightWeighting;
 			}`;
 		
 		var vertShader = context.createShader(context.VERTEX_SHADER);
@@ -228,10 +252,9 @@ class App
 		var fragCode = `
 			precision mediump float;
 			varying lowp vec4 vColor;
-			varying highp vec3 vLighting;
-			uniform sampler2D uSampler;
+			varying vec3 vLightWeighting;
 			void main(void) {
-				gl_FragColor = vec4(vColor.rgb * vLighting, 1.);
+				gl_FragColor = vec4(vColor.rgb, 1.);
 			}`;
 		
 		var fragShader = context.createShader(context.FRAGMENT_SHADER);
@@ -241,31 +264,38 @@ class App
 		return fragShader;
 	}
 
-	public static UseQuarternionShaderProgram(context: WebGLRenderingContext, vertex_buffer: WebGLBuffer, color_buffer: WebGLBuffer): IShaderProgram
+	public static UseQuarternionShaderProgram(ctx: WebGLRenderingContext, vertex_buffer: WebGLBuffer, color_buffer: WebGLBuffer): IShaderProgram
 	{
-		var vertShader = App.UseQuarternionVertShader(context);
-		var fragShader = App.UseVariableFragShader(context);
+		var vertShader = App.UseQuarternionVertShader(ctx);
+		var fragShader = App.UseVariableFragShader(ctx);
     
-		var shaderProgram = context.createProgram();
-		context.attachShader(shaderProgram, vertShader);
-		context.attachShader(shaderProgram, fragShader);
-		context.linkProgram(shaderProgram);
+		var shaderProgram = ctx.createProgram();
+		ctx.attachShader(shaderProgram, vertShader);
+		ctx.attachShader(shaderProgram, fragShader);
+		ctx.linkProgram(shaderProgram);
 		
-		var Pmatrix = context.getUniformLocation(shaderProgram, "Pmatrix");
-		var Vmatrix = context.getUniformLocation(shaderProgram, "Vmatrix");
-		var Mmatrix = context.getUniformLocation(shaderProgram, "Mmatrix");
-		context.bindBuffer(context.ARRAY_BUFFER, vertex_buffer);
+		var Pmatrix = ctx.getUniformLocation(shaderProgram, "Pmatrix");
+		var Vmatrix = ctx.getUniformLocation(shaderProgram, "Vmatrix");
+		var Mmatrix = ctx.getUniformLocation(shaderProgram, "Mmatrix");
+		ctx.bindBuffer(ctx.ARRAY_BUFFER, vertex_buffer);
 		
-		var position = context.getAttribLocation(shaderProgram, "position");
-		context.vertexAttribPointer(position, 3, context.FLOAT, false, 0, 0);
-		context.enableVertexAttribArray(position);
-		context.bindBuffer(context.ARRAY_BUFFER, color_buffer);
+		var position = ctx.getAttribLocation(shaderProgram, "position");
+		ctx.vertexAttribPointer(position, 3, ctx.FLOAT, false, 0, 0);
+		ctx.enableVertexAttribArray(position);
+		ctx.bindBuffer(ctx.ARRAY_BUFFER, color_buffer);
 		
-		var color = context.getAttribLocation(shaderProgram, "color");
-		context.vertexAttribPointer(color, 3, context.FLOAT, false, 0, 0);
-		context.enableVertexAttribArray(color);
+		var color = ctx.getAttribLocation(shaderProgram, "color");
+		ctx.vertexAttribPointer(color, 3, ctx.FLOAT, false, 0, 0);
+		ctx.enableVertexAttribArray(color);
 		
-		context.useProgram(shaderProgram);
+		ctx.useProgram(shaderProgram);
+		
+		var ambientColor = ctx.getUniformLocation(shaderProgram, "uAmbientColor");
+		var pointLightingLocation = ctx.getUniformLocation(shaderProgram, "uPointLightingLocation");
+		var pointLightingColor = ctx.getUniformLocation(shaderProgram, "uPointLightingColor");
+		ctx.uniform3f(ambientColor, 0.2, 0.2, 0.2);
+		ctx.uniform3f(pointLightingLocation, 0.0,0.0,-20.0);
+		ctx.uniform3f(pointLightingColor, 0.8,0.8,0.8);
     
 		return {
 			Pmatrix: Pmatrix,
@@ -332,6 +362,51 @@ class Matrix
 		m[5] = c*m[5]+s*mv4;
 		m[9] = c*m[9]+s*mv8;
 	}
+	
+	public static Translate(a:number[]|Float32Array,b:number[]|Float32Array,c?:number[]|Float32Array)
+	{
+		var d = b[0],
+			e = b[1],
+			s = b[2];
+		if (!c || a == c)
+		{
+			a[12] = a[0] * d + a[4] * e + a[8] * s + a[12];
+			a[13] = a[1] * d + a[5] * e + a[9] * s + a[13];
+			a[14] = a[2] * d + a[6] * e + a[10] * s + a[14];
+			a[15] = a[3] * d + a[7] * e + a[11] * s + a[15];
+			return a;
+		}
+		var g = a[0],
+			f = a[1],
+			h = a[2],
+			i = a[3],
+			j = a[4],
+			k = a[5],
+			l = a[6],
+			o = a[7],
+			m = a[8],
+			n = a[9],
+			p = a[10],
+			r = a[11];
+		c[0] = g;
+		c[1] = f;
+		c[2] = h;
+		c[3] = i;
+		c[4] = j;
+		c[5] = k;
+		c[6] = l;
+		c[7] = o;
+		c[8] = m;
+		c[9] = n;
+		c[10] = p;
+		c[11] = r;
+		c[12] = g * d + j * e + m * s + a[12];
+		c[13] = f * d + k * e + n * s + a[13];
+		c[14] = h * d + l * e + p * s + a[14];
+		c[15] = i * d + o * e + r * s + a[15];
+		return c;
+	};
+
 }
 
 class Icosahedron3D
@@ -475,7 +550,6 @@ function showRangeValue(prepend:string,sliderId:string,inputId:string)
 (() =>
 {
 	let app = new App(<HTMLCanvasElement>document.getElementById('canvas'));
-	app.Draw();
 
 	let drawMode = <HTMLSelectElement>document.getElementById('drawMode');
 	drawMode.addEventListener('change', (e) => app.SetDrawMode((<HTMLOptionElement>drawMode.options[drawMode.selectedIndex]).value));
@@ -486,16 +560,22 @@ function showRangeValue(prepend:string,sliderId:string,inputId:string)
 	let sliderX = <HTMLInputElement>document.getElementById('sliderX');
 	let sliderY = <HTMLInputElement>document.getElementById('sliderY');
 	let sliderZ = <HTMLInputElement>document.getElementById('sliderZ');
+	let sliderZoom = <HTMLInputElement>document.getElementById('sliderZoom');
 	
 	sliderX.value = app.GetRotation('X').toString();
 	sliderY.value = app.GetRotation('Y').toString();
 	sliderZ.value = app.GetRotation('Z').toString();
+	sliderZoom.value = app.GetZoom().toString();
 	
 	sliderX.addEventListener('input', () => app.SetRotation(sliderX.getAttribute('data-axis'), parseFloat(sliderX.value)));
 	sliderY.addEventListener('input', () => app.SetRotation(sliderY.getAttribute('data-axis'), parseFloat(sliderY.value)));
 	sliderZ.addEventListener('input', () => app.SetRotation(sliderZ.getAttribute('data-axis'), parseFloat(sliderZ.value)));
+	sliderZoom.addEventListener('input', () => app.SetZoom(parseFloat(sliderZoom.value)));
 	
 	showRangeValue('X:', 'sliderX', 'sliderInputX');
 	showRangeValue('Y:', 'sliderY', 'sliderInputY');
 	showRangeValue('Z:', 'sliderZ', 'sliderInputZ');
+	showRangeValue('', 'sliderZoom', 'sliderInputZoom');
+
+	app.Draw();
 })();
